@@ -150,7 +150,20 @@ long so_ftell(SO_FILE *stream)
 {
     return lseek(stream->fd, 0, SEEK_CUR);
 }
-size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream) { return NULL; }
+size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
+{
+    int aux = 1;
+    char character_value = so_fgetc(stream);
+    while ((aux <= nmemb) && character_value)
+    {
+        memcpy(ptr + (size * (aux - 1)), (stream->buffer) + (stream->start - 1), size);
+        character_value = (unsigned char)so_fgetc(stream);
+        aux++;
+    }
+    if (character_value == 0 || character_value == SO_EOF)
+        return 0;
+    return aux;
+}
 size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream) { return NULL; }
 int so_fgetc(SO_FILE *stream)
 {
