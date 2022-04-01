@@ -1,6 +1,8 @@
 #include <fcntl.h>
 #include <string.h>
 #include <unistd.h>
+#include <stdio.h>
+#include <errno.h>
 #include "so_stdio.h"
 struct _so_file
 {
@@ -10,6 +12,7 @@ struct _so_file
     int pid;
 
     unsigned char *buffer;
+    char mode[3];
     int start;
     int len_read;
     int error;
@@ -23,35 +26,17 @@ SO_FILE *so_fopen(const char *pathname, const char *mode)
     if (aux == NULL)
         return NULL;
     if (strcmp(mode, "r+") == 0)
-    {
-        aux->fd = open(pathname, O_RDONLY | O_WRONLY);
-        aux->permissions = O_RDONLY | O_WRONLY;
-    }
+        aux->fd = open(pathname, O_RDWR);
     else if (strcmp(mode, "w+") == 0)
-    {
-        aux->fd = open(pathname, O_WRONLY | O_CREAT | O_TRUNC | O_RDONLY);
-        aux->permissions = O_WRONLY | O_CREAT | O_TRUNC | O_RDONLY;
-    }
+        aux->fd = open(pathname, O_RDWR | O_CREAT | O_TRUNC);
     else if (strcmp(mode, "a+") == 0)
-    {
-        aux->fd = open(pathname, O_APPEND | O_CREAT | O_RDONLY);
-        aux->permissions = O_APPEND | O_CREAT | O_RDONLY;
-    }
+        aux->fd = open(pathname, O_RDWR | O_CREAT | O_APPEND);
     else if (strcmp(mode, "r") == 0)
-    {
         aux->fd = open(pathname, O_RDONLY);
-        aux->permissions = O_RDONLY;
-    }
     else if (strcmp(mode, "w") == 0)
-    {
         aux->fd = open(pathname, O_WRONLY | O_CREAT | O_TRUNC);
-        aux->permissions = O_WRONLY | O_CREAT | O_TRUNC;
-    }
     else if (strcmp(mode, "a") == 0)
-    {
-        aux->fd = open(pathname, O_APPEND | O_CREAT);
-        aux->permissions = O_APPEND | O_CREAT;
-    }
+        aux->fd = open(pathname, O_WRONLY | O_APPEND | O_CREAT);
     else
     {
         free(aux);
@@ -70,6 +55,7 @@ SO_FILE *so_fopen(const char *pathname, const char *mode)
         free(aux);
         return NULL;
     }
+    strcpy(aux->mode, mode);
     aux->start = 0;
     aux->len_read = 0;
     aux->last_operation = 0;
@@ -101,21 +87,6 @@ int so_fclose(SO_FILE *stream)
 
 int so_fflush(SO_FILE *stream)
 {
-    /* if (stream->last_operation != 2)
-         return SO_EOF;
-     int bytes_to_dump = stream->len_read - stream->start;
-     int bytes_wrote;
-     while (bytes_to_dump)
-     {
-         bytes_wrote = write(stream->fd, (stream->buffer) + stream->start, bytes_to_dump);
-         if (bytes_wrote == -1)
-         {
-             stream->error = 2;
-             return SO_EOF;
-         }
-         stream->start += bytes_wrote;
-         bytes_to_dump -= bytes_wrote;
-     }*/
     if (stream->start > 0 && stream->last_operation == 2)
     {
         int bytes_to_dump = stream->start;
@@ -125,16 +96,40 @@ int so_fflush(SO_FILE *stream)
             bytes_wrote = write(stream->fd, (stream->buffer) + stream->start - bytes_to_dump, bytes_to_dump);
             if (bytes_wrote == -1)
             {
+                stream->start = 0;
                 stream->error = 2;
                 return SO_EOF;
             }
             bytes_to_dump -= bytes_wrote;
         }
     }
+    memset(stream->buffer, 0, 4096);
+    stream->start = 0;
+    stream->last_operation = 0;
     return 0;
 }
 int so_fseek(SO_FILE *stream, long offset, int whence)
 {
+    if (stream->last_operation == 2)
+    {
+        int aux = so_fflush(stream);
+
+        if (!aux)
+            return -1;
+        stream->last_operation = 0;
+    }
+    else if (stream->last_operation == 1)
+    {
+        int aux = lseek(stream->fd, stream->start - stream->len_read, SEEK_CUR);
+        memset(stream->buffer, 0, 4096);
+        stream->start = 0;
+        stream->last_operation = 0;
+        stream->len_read = 0;
+    }
+    int val = lseek(stream->fd, offset, whence);
+    if (val == -1)
+        return -1;
+    return 0;
     /* if (stream->last_operation == 1)
      {
          memset(stream->buffer, 0, 4096);
@@ -163,17 +158,17 @@ int so_fseek(SO_FILE *stream, long offset, int whence)
     return_value = lseek(stream->fd, offset, whence);
     if (return_value == -1)
         return -1;*/
-    return 0;
     //}
 }
 long so_ftell(SO_FILE *stream)
 {
+    so_fseek(stream, 0, SEEK_CUR);
     return lseek(stream->fd, 0, SEEK_CUR);
 }
 size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
 {
     int aux = 1;
-    char character_value = 1;
+    char character_value;
     while ((aux <= nmemb * size) && stream->error == 0)
     {
         character_value = (unsigned char)so_fgetc(stream);
@@ -184,7 +179,20 @@ size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
         return 0;
     return (aux - 1) / size;
 }
-size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream) { return NULL; }
+size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
+{
+    int aux = 1;
+    char character_value;
+    while ((aux <= nmemb * size) && stream->error == 0)
+    {
+        character_value = (unsigned char)so_fputc((int)(((unsigned char *)ptr)[aux - 1]), stream);
+        memcpy(((unsigned char *)ptr) + (aux - 1), (stream->buffer) + (stream->start - 1), 1);
+        aux++;
+    }
+    if (stream->error == 2 || character_value == SO_EOF)
+        return 0;
+    return (aux - 1) / size;
+}
 int so_fgetc(SO_FILE *stream)
 {
     /*if (!(stream->permissions && O_RDONLY))
@@ -192,8 +200,10 @@ int so_fgetc(SO_FILE *stream)
         stream->error = 2;
         return SO_EOF;
     }*/
-    // if (stream->last_operation == 2)
-    //     so_fseek(stream, -1, SEEK_CUR);
+    /*if (stream->last_operation == 2)
+    {
+        //so_fseek(stream, -1, SEEK_CUR);
+    }*/
 
     if (stream->start == stream->len_read)
     {
@@ -202,14 +212,18 @@ int so_fgetc(SO_FILE *stream)
         stream->start = 0;
         stream->len_read = 0;
         bytes_read = read(stream->fd, stream->buffer, 4096);
+        // printf(" Value of errno: %d\n ", errno);
         if (bytes_read == 0)
         {
             stream->error = 1;
+            stream->last_operation = 1;
             return 0;
         }
         else if (bytes_read == -1)
         {
+            // perror()
             stream->error = 2;
+            stream->last_operation = 1;
             return SO_EOF;
         }
         else
@@ -238,9 +252,7 @@ int so_fputc(int c, SO_FILE *stream)
         int res = so_fflush(stream);
         if (!res)
         {
-            stream->start = 0;
-            // memcpy((stream->buffer) + (stream->start), &aux, 1);
-            stream->buffer[(stream->start)] = aux;
+            stream->buffer[stream->start] = aux;
             stream->start++;
         }
         else
@@ -252,7 +264,6 @@ int so_fputc(int c, SO_FILE *stream)
     else
     {
         stream->buffer[stream->start] = aux;
-        // memcpy((stream->buffer) + (stream->start), &aux, 1);
         stream->start++;
     }
     return aux;
