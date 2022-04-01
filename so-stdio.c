@@ -86,6 +86,11 @@ int so_fileno(SO_FILE *stream)
 int so_fclose(SO_FILE *stream)
 {
     int aux;
+
+    aux = so_fflush(stream);
+    if (aux)
+        return SO_EOF;
+
     aux = close(stream->fd);
     if (aux == -1)
         return SO_EOF;
@@ -111,6 +116,21 @@ int so_fflush(SO_FILE *stream)
          stream->start += bytes_wrote;
          bytes_to_dump -= bytes_wrote;
      }*/
+    if (stream->start > 0 && stream->last_operation == 2)
+    {
+        int bytes_to_dump = stream->start;
+        int bytes_wrote;
+        while (bytes_to_dump)
+        {
+            bytes_wrote = write(stream->fd, (stream->buffer) + stream->start - bytes_to_dump, bytes_to_dump);
+            if (bytes_wrote == -1)
+            {
+                stream->error = 2;
+                return SO_EOF;
+            }
+            bytes_to_dump -= bytes_wrote;
+        }
+    }
     return 0;
 }
 int so_fseek(SO_FILE *stream, long offset, int whence)
@@ -153,16 +173,16 @@ long so_ftell(SO_FILE *stream)
 size_t so_fread(void *ptr, size_t size, size_t nmemb, SO_FILE *stream)
 {
     int aux = 1;
-    char character_value = so_fgetc(stream);
-    while ((aux <= nmemb) && character_value)
+    char character_value = 1;
+    while ((aux <= nmemb * size) && stream->error == 0)
     {
-        memcpy(ptr + (size * (aux - 1)), (stream->buffer) + (stream->start - 1), size);
         character_value = (unsigned char)so_fgetc(stream);
+        memcpy(ptr + (aux - 1), (stream->buffer) + (stream->start - 1), 1);
         aux++;
     }
-    if (character_value == 0 || character_value == SO_EOF)
+    if (stream->error == 2 || character_value == SO_EOF)
         return 0;
-    return aux;
+    return (aux - 1) / size;
 }
 size_t so_fwrite(const void *ptr, size_t size, size_t nmemb, SO_FILE *stream) { return NULL; }
 int so_fgetc(SO_FILE *stream)
@@ -195,7 +215,8 @@ int so_fgetc(SO_FILE *stream)
         else
         {
             stream->len_read = bytes_read;
-            stream->last_operation = 2;
+            stream->last_operation = 1;
+            stream->error = 0;
             stream->start++;
             return (int)stream->buffer[stream->start - 1];
         }
@@ -203,10 +224,39 @@ int so_fgetc(SO_FILE *stream)
     else
     {
         stream->start++;
+        stream->last_operation = 1;
+        stream->error = 0;
         return (int)stream->buffer[stream->start - 1];
     }
 }
-int so_fputc(int c, SO_FILE *stream) { return NULL; }
+int so_fputc(int c, SO_FILE *stream)
+{
+    unsigned char aux = (unsigned char)c;
+    stream->last_operation = 2;
+    if (stream->start == 4096)
+    {
+        int res = so_fflush(stream);
+        if (!res)
+        {
+            stream->start = 0;
+            // memcpy((stream->buffer) + (stream->start), &aux, 1);
+            stream->buffer[(stream->start)] = aux;
+            stream->start++;
+        }
+        else
+        {
+            stream->error = 2;
+            return SO_EOF;
+        }
+    }
+    else
+    {
+        stream->buffer[stream->start] = aux;
+        // memcpy((stream->buffer) + (stream->start), &aux, 1);
+        stream->start++;
+    }
+    return aux;
+}
 
 int so_feof(SO_FILE *stream)
 {
