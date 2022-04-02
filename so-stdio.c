@@ -270,6 +270,7 @@ SO_FILE *so_popen(const char *command, const char *type)
     }
     else
     {
+        free(stream->buffer);
         free(stream);
         return NULL;
     }
@@ -279,6 +280,7 @@ SO_FILE *so_popen(const char *command, const char *type)
     rc = pipe(fds);
     if (rc != 0)
     {
+        free(stream->buffer);
         free(stream);
         return NULL;
     }
@@ -294,6 +296,7 @@ SO_FILE *so_popen(const char *command, const char *type)
     case -1:
         close(fds[0]);
         close(fds[1]);
+        free(stream->buffer);
         free(stream);
 
         return NULL;
@@ -346,5 +349,5 @@ int so_pclose(SO_FILE *stream)
     if (rc < 0)
         return -1;
 
-    return 0;
+    return status;
 }
