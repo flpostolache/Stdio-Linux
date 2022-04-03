@@ -31,12 +31,8 @@ Bibliography:
     https://man7.org/linux/man-pages/man2/dup.2.html
     https://linux.die.net/man/3/execlp
     https://linux.die.net/man/2/waitpid
+    https://ocw.cs.pub.ro/courses/so/laboratoare/laborator-03
+    https://ocw.cs.pub.ro/courses/so/laboratoare/laborator-01
 
 Git:
     https://github.com/maniatro111/SO_tema2
-
-Ce să NU conțină un readme
-Detalii de implementare despre fiecare funcție/fișier în parte
-Fraze lungi care să ocolească subiectul în cauză
-Răspunsuri și idei neargumentate
-Comentarii copy/paste din cod și TODO-uri
